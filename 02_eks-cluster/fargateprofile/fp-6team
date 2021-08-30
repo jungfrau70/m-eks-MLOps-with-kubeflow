@@ -1,0 +1,15 @@
+---
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: fargate
+  region: ap-northeast-2
+  version: "1.17"
+
+fargateProfiles:
+  - name: fp-6team
+    selectors:
+      # All workloads in the "default" Kubernetes namespace will be
+      # scheduled onto Fargate:
+      - namespace: 6team

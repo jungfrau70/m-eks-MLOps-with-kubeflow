@@ -1,0 +1,3 @@
+eksctl create fargateprofile -f fargateprofile-ns-6team
+eksctl get fargateprofile --cluster fargate
+eksctl delete fargateprofile fp-6team --cluster fargate

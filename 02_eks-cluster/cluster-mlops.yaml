@@ -1,0 +1,59 @@
+# An example of ClusterConfig with a normal nodegroup and a Fargate profile.
+---
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: fargate
+  region: ap-northeast-2
+  version: "1.16"
+# NodeGroup holds all configuration attributes that are specific to a nodegroup
+# You can have several node group in your cluster.
+
+nodeGroups:
+  - name: cpu-nodegroup
+    instanceType: m5.xlarge
+    desiredCapacity: 2
+    minSize: 0
+    maxSize: 4
+    volumeSize: 50
+    ssh:
+      allow: true
+      publicKeyPath: '~/.ssh/id_rsa.pub'
+
+  # # Example of GPU node group
+  # - name: Tesla-V100
+  #   instanceType: p3.8xlarge
+  #   # Make sure the availability zone here is one of cluster availability zones.
+  #   #availabilityZones: ["ap-northeast-2b"]
+  #   desiredCapacity: 0
+  #   minSize: 0
+  #   maxSize: 4
+  #   volumeSize: 50
+  #   # ssh:
+  #   #   allow: true
+  #   #   publicKeyPath: '~/.ssh/id_rsa.pub'
+
+fargateProfiles:
+  # - name: fp-default
+  #   selectors:
+  #     # All workloads in the "default" Kubernetes namespace will be
+  #     # scheduled onto Fargate:
+  #     - namespace: default
+  #     # All workloads in the "kube-system" Kubernetes namespace will be
+  #     # scheduled onto Fargate:
+  #     - namespace: kube-system
+  - name: fp-dev
+    selectors:
+      # All workloads in the "dev" Kubernetes namespace matching the following
+      # label selectors will be scheduled onto Fargate:
+      - namespace: dev
+        labels:
+          env: dev
+          checks: passed
+---
+
+# To enable all of the control plane logs, uncomment below:
+cloudWatch:
+ clusterLogging:
+   enableTypes: ["*"]
