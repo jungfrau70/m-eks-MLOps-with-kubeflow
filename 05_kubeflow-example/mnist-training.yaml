@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: mnist-training
+  labels:
+    app: mnist
+    type: training
+    framework: tensorflow
+spec:
+  restartPolicy: OnFailure
+  containers:
+  - name: mnist-training
+    image: $CI_REGISTRY_IMAGE/mnist-training:latest
+    command:
+      - "python"
+      - "main.py"
+    env:
+      - name: AWS_REGION
+        value: $AWS_REGION
+      - name: AWS_ACCESS_KEY_ID
+        value: $AWS_ACCESS_KEY_ID
+      - name: AWS_SECRET_ACCESS_KEY
+        value: $AWS_SECRET_ACCESS_KEY
+      - name: S3_BUCKET
+        value: $S3_BUCKET

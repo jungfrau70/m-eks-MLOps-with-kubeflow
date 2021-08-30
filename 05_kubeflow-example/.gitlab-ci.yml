@@ -1,0 +1,146 @@
+stages:
+  - validate
+  - build
+  - train
+  - deploy
+  - test
+  - cleanup
+
+# Validate the model by running it on the CI/CD runner against a small data set
+# Note that we are starting with the standard tensorflow container image
+
+.validate:
+  stage: validate
+  except:
+    variables:
+      - $VALIDATE_DISABLED
+  image: tensorflow/tensorflow:1.13.1
+  script:
+    - python mnist.py
+
+
+# Train the model by running it and placing the output (model) in GitLab artifact store
+# Might remove this job?
+
+.train-on-runner:
+  stage: train
+  image: tensorflow/tensorflow:1.13.1
+  script:
+    - python mnist.py --model_export_path ./model
+  artifacts:
+    paths:
+      - ./model
+
+
+# Build the Docker container for the model
+
+build:
+  stage: build
+  image: docker:latest
+  services:
+    - docker:stable-dind
+  script:
+    - docker build -t $CI_REGISTRY_IMAGE/mnist-training:latest .
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - docker push $CI_REGISTRY_IMAGE/mnist-training:latest
+
+
+# Train the model on a Kubernetes cluster and put the output in an S3 bucket.
+# Assumptions:
+#   - S3_BUCKET variable
+#   - AWS_ACCESS_KEY_ID variable
+#   - AWS_SECRET_ACCESS_KEY variable
+#   - AWS_REGION variable
+
+train-on-kubenetes:
+  stage: train
+  image: ubuntu:latest
+  environment: training
+  before_script:
+    - apt update
+    - apt install -y apt-transport-https curl gettext gnupg gnupg1 gnupg2
+    - curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add -
+    - echo "deb https://apt.kubernetes.io/ kubernetes-xenial main" | tee -a /etc/apt/sources.list.d/kubernetes.list
+    - apt-get update
+    - apt-get install -y kubectl gettext
+  script:
+    - envsubst < mnist-training.yaml | kubectl create -f -
+
+
+# Start the inference pod
+# Assumptions:
+#   - S3_BUCKET variable
+#   - AWS_ACCESS_KEY_ID variable
+#   - AWS_SECRET_ACCESS_KEY variable
+#   - AWS_REGION variable
+
+deploy:
+  stage: deploy
+  image: ubuntu:latest
+  environment: inference
+  before_script:
+    - apt update
+    - apt install -y apt-transport-https curl gettext gnupg gnupg1 gnupg2
+    - curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add -
+    - echo "deb https://apt.kubernetes.io/ kubernetes-xenial main" | tee -a /etc/apt/sources.list.d/kubernetes.list
+    - apt-get update
+    - apt-get install -y kubectl gettext
+  script:
+    - envsubst < mnist-inference.yaml | kubectl create -f -
+
+
+# Test the model with a random sample
+
+test:
+  stage: test
+  image: tensorflow/tensorflow:1.13.1
+  environment: inference
+  before_script:
+    - apt update
+    - apt install -y curl
+    - curl -LO https://storage.googleapis.com/kubernetes-release/release/`curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt`/bin/linux/amd64/kubectl
+    - chmod a+x ./kubectl
+    - pip install requests
+  script:
+    - ./kubectl port-forward `./kubectl get pods --namespace $KUBE_NAMESPACE -l=app=mnist,type=inference -o jsonpath='{.items[0].metadata.name}' --field-selector=status.phase=Running` 8800:8800 &
+    - python inference_client.py --endpoint http://localhost:8800/v1/models/mnist:predict
+
+
+# Clean up the Kubernetes resources
+
+cleanup-training:
+  stage: cleanup
+  image: ubuntu:latest
+  environment: training
+  before_script:
+    - apt update
+    - apt install -y curl
+    - curl -LO https://storage.googleapis.com/kubernetes-release/release/`curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt`/bin/linux/amd64/kubectl
+    - chmod a+x ./kubectl
+  script:
+    - ./kubectl delete pod mnist-training --namespace $KUBE_NAMESPACE
+
+cleanup-inference:
+  stage: cleanup
+  image: ubuntu:latest
+  environment: inference
+  before_script:
+    - apt update
+    - apt install -y curl
+    - curl -LO https://storage.googleapis.com/kubernetes-release/release/`curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt`/bin/linux/amd64/kubectl
+    - chmod a+x ./kubectl
+  script:
+    - ./kubectl delete service mnist-inference --namespace $KUBE_NAMESPACE
+    - ./kubectl delete deployment mnist-inference --namespace $KUBE_NAMESPACE
+
+cleanup-s3:
+  stage: cleanup
+  image: ubuntu:latest
+  before_script:
+    - apt update
+    - apt install -y curl unzip python
+    - curl "https://s3.amazonaws.com/aws-cli/awscli-bundle.zip" -o "awscli-bundle.zip"
+    - unzip awscli-bundle.zip
+    - ./awscli-bundle/install -i /usr/local/aws -b /usr/local/bin/aws
+  script:
+    - aws s3 rm s3://$S3_BUCKET/mnist/tf_saved_model/1
